@@ -9,9 +9,7 @@ Bootstrap4+Jquery  lightweight html editor,single js file.
 #### 4.Html demo<br>
 
 `<form><input id="descr" name="descr" type="hidden"/></form>     
-
 `<script src="${relpath}/bootstrap/js/bootstrap-wysiwyg.js"></script>  
-
 `<script>  
 `    $(function () {  
 `        $("#descr").initWysiwyg(true);  

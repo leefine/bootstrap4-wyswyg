@@ -1,14 +1,7 @@
 (function (window, $) {
     "use strict";
 
-    /*
-     *  Represenets an editor
-     *  @constructor
-     *  @param {DOMNode} element - The TEXTAREA element to add the Wysiwyg to.
-     *  @param {object} userOptions - The default options selected by the user.
-     */
     function Wysiwyg(element, userOptions) {
-
         this.selectedRange = null;
         this.editor = $(element);
         var editor = $(element);
@@ -19,6 +12,9 @@
             selectionMarker: "edit-focus-marker",
             selectionColor: "blue",
             dragAndDropImages: true,
+            upload_img_type: 'bmp|gif|jpg|jpeg|png',
+            upload_doc_type: 'doc|docx|xls|xlsx|ppt|pptx|ppsx|pdf',
+            upload_file_max_size_m: 50,
             fileUploadError: function (reason, detail) {
                 console.log("File upload error", reason, detail);
             }
@@ -33,22 +29,18 @@
 
         this.bindToolbar(editor, $(options.toolbarSelector), options, toolbarBtnSelector);
 
-        editor.attr("contenteditable", true)
-            .on("mouseup keyup mouseout", function () {
+        editor.attr({"contenteditable": true, "designMode": 'On'})
+            .on("mouseup mouseout keyup", function () {
                 this.saveSelection();
                 this.updateToolbar(editor, toolbarBtnSelector, options);
+            }.bind(this))
+            .on('keydown', function (e) {
+                if (e.keyCode === 13) {
+                    document.execCommand('insertHTML', false, '<br/><br/>');
+
+                    return false;
+                }
             }.bind(this));
-
-        $(window).bind("touchend", function (e) {
-            var isInside = ( editor.is(e.target) || editor.has(e.target).length > 0 ),
-                currentRange = this.getCurrentRange(),
-                clear = currentRange && ( currentRange.startContainer === currentRange.endContainer && currentRange.startOffset === currentRange.endOffset );
-
-            if (!clear || isInside) {
-                this.saveSelection();
-                this.updateToolbar(editor, toolbarBtnSelector, options);
-            }
-        });
     }
 
     Wysiwyg.prototype.readFileIntoDataUrl = function (fileInfo) {
@@ -91,6 +83,7 @@
     };
 
     Wysiwyg.prototype.execCommand = function (commandWithArgs, valueArg, editor, options, toolbarBtnSelector) {
+        if (commandWithArgs == null || commandWithArgs == '')return;
         var commandArr = commandWithArgs.split(" "),
             command = commandArr.shift(),
             args = commandArr.join(" ") + ( valueArg || "" );
@@ -164,18 +157,40 @@
         }
     };
 
-    Wysiwyg.prototype.insertFiles = function (files, options, editor, toolbarBtnSelector) {
+    Wysiwyg.prototype.insertFiles = function (files, fileInputName, options, editor, toolbarBtnSelector) {
         var self = this;
-        editor.focus();
         $.each(files, function (idx, fileInfo) {
-            if (/^image\//.test(fileInfo.type) || /.+\.(bmp|gif|jpg|jpeg|png)$/.test(fileInfo.name.toLowerCase())) {
+            if (fileInfo.size > (options.upload_file_max_size_m * 1024 * 1024)) {
+                alertify_ex.alert(fileInfo.name + ' is too big,max size is ' + maxUploadSizeByte + 'M');
+                return true;
+            }
+            var imgReg = new RegExp(options.upload_img_type);
+            var docReg = new RegExp(options.upload_doc_type);
+            if ((fileInputName == 'Image' || fileInputName == 'drag') && /^image\//.test(fileInfo.type) && imgReg.test(fileInfo.name.toLowerCase())) {
                 $.when(self.readFileIntoDataUrl(fileInfo)).done(function (dataUrl) {
                     self.execCommand("insertimage", dataUrl, editor, options, toolbarBtnSelector);
                     editor.trigger("image-inserted");
                 }).fail(function (e) {
+                    alertify_ex.alert('Read file failed');
                     options.fileUploadError("file-reader", e);
                 });
-            } else {
+            } else if ((fileInputName == 'attachFile' || fileInputName == 'drag') && /^application\//.test(fileInfo.type) && docReg.test(fileInfo.name.toLowerCase())) {
+                $.when(self.readFileIntoDataUrl(fileInfo)).done(function (dataUrl) {
+                    var uuid = $.fn.wysiwyg.guid();
+                    var fileName = relpath + "/res/post_file/" + uuid + fileInfo.name.substring(fileInfo.name.lastIndexOf("."), fileInfo.name.length);
+                    $(editor).after("<input value='" + uuid + "~" + dataUrl + "' type='hidden' name='post_file'/>");
+                    document.execCommand("insertHTML", false, '<br/><a href="' + fileName + '" class="icon-file text-danger">' + fileInfo.name + '</a><br/>');
+                }).fail(function (e) {
+                    alertify_ex.alert('Read file failed');
+                    options.fileUploadError("file-reader", e);
+                });
+            }
+            else {
+                var eMsg = "";
+                if (fileInputName == 'Image') eMsg = options.upload_img_type;
+                if (fileInputName == 'attachFile') eMsg = options.upload_doc_type;
+                if (eMsg.length < 1) eMsg = options.upload_img_type + '|' + options.upload_doc_type;
+                alertify_ex.alert('Unsupported file type! Please upload type:' + eMsg);
                 options.fileUploadError("unsupported-file-type", fileInfo.type);
             }
         });
@@ -215,7 +230,6 @@
             } else {
                 self.execCommand($(this).data(options.commandRole), null, editor, options, toolbarBtnSelector);
             }
-
             self.saveSelection();
         });
 
@@ -228,8 +242,8 @@
         });
 
         toolbar.find("input[type=text][data-" + options.commandRole + "]").on("webkitspeechchange change", function () {
-            var newValue = this.value;  // Ugly but prevents fake double-calls due to selection restoration
-            this.value = "";
+            var newValue = $(this).val();  // Ugly but prevents fake double-calls due to selection restoration
+            $(this).val('');//.value = "";
             self.restoreSelection();
 
             var text = window.getSelection();
@@ -248,10 +262,29 @@
             var input = $(this);
             self.markSelection(false, options);
         });
+        toolbar.find(".colorSelector").on("click", function () {
+            var cmdBtn = $(this).data(options.commandRole);
+            self.restoreSelection();
+            if (cmdBtn == ('hiliteColor') || cmdBtn == 'backColor') {
+                var cR = document.execCommand(cmdBtn, false, $(this).attr('data-color'));
+                return;
+            }
+            else if (cmdBtn == 'foreColor') {
+                document.execCommand(cmdBtn, false, $(this).attr('data-color'));
+                self.saveSelection();
+            }
+            else {
+                self.execCommand(cmdBtn, null, editor, options, toolbarBtnSelector);
+                self.saveSelection();
+            }
+        }).on("blur", function () {
+            var input = $(this);
+            self.markSelection(false, options);
+        });
         toolbar.find("input[type=file][data-" + options.commandRole + "]").change(function () {
             self.restoreSelection();
             if (this.type === "file" && this.files && this.files.length > 0) {
-                self.insertFiles(this.files, options, editor, toolbarBtnSelector);
+                self.insertFiles(this.files, this.name, options, editor, toolbarBtnSelector);
             }
             self.saveSelection();
             this.value = "";
@@ -265,7 +298,7 @@
             e.stopPropagation();
             e.preventDefault();
             if (dataTransfer && dataTransfer.files && dataTransfer.files.length > 0) {
-                self.insertFiles(dataTransfer.files, options, editor, toolbarBtnSelector);
+                self.insertFiles(dataTransfer.files, 'drag', options, editor, toolbarBtnSelector);
             }
         });
     };
@@ -279,30 +312,29 @@
         var wysiwyg = new Wysiwyg(this, userOptions);
     };
 
+    $.fn.wysiwyg.guid = function () {
+        function S4() {
+            return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
+        }
+
+        return (S4() + S4() + "-" + S4() + "-" + S4() + "-" + S4() + "-" + S4() + S4() + S4());
+    };
+
     $.fn.wysiwyg.getHtml = function (container, ifImgConvert) {
-        var guid = function () {
-            function S4() {
-                return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
-            }
-
-            return (S4() + S4() + "-" + S4() + "-" + S4() + "-" + S4() + "-" + S4() + S4() + S4());
-        };
-
         if (ifImgConvert !== undefined && ifImgConvert == true) {
             var gGal = $.parseHTML('<div>' + $(container).html() + '</div>');
             if ($(gGal).has("img").length) {
                 var gImages = $("img", $(gGal));
-                var uuid = guid();
                 var ifExistImg = false;
                 $.each(gImages, function (i, v) {
                     if ($(v).attr("src").match(/^data:image\/.*$/)) {
-                        ifExistImg = true;
-                        var picName = uuid + '_' + i + '.' + $(v).attr("src").substring($(v).attr("src").indexOf("/") + 1, $(v).attr("src").indexOf(";"));//后缀名
-                        $(container).before("<input value='" + $(v).attr("src") + "' type='hidden' name='post_img'/>");
+                        var uuid = $.fn.wysiwyg.guid();
+                        var picName = uuid + '.' + $(v).attr("src").substring($(v).attr("src").indexOf("/") + 1, $(v).attr("src").indexOf(";"));//后缀名
+                        $(container).after("<input value='" + uuid + "~" + $(v).attr("src") + "' type='hidden' name='post_img'/>");
                         $(v).attr("src", relpath + "/res/post_img/" + picName);
+                        ifExistImg = true;
                     }
                 });
-                if (ifExistImg) $(container).after("<input value='" + uuid + "' type='hidden' name='post_img_id' />");
             }
             return $(gGal).html();
         }
@@ -311,12 +343,24 @@
         }
     };
 
-
     /***
      * 初始化编辑器
      * @param ifImgConvert 是否转换Base64图片
      */
-    $.fn.initWysiwyg = function (ifImgConvert, editorHeight) {
+    $.fn.initWysiwyg = function (ifImgConvert, editorHeight, userOptions) {
+        var getColors = function (t) {
+            var clr = new Array('00', '50', 'A0', 'FF'),
+                colorsSelector = "";
+            for (i = 0; i < 4; i++) {
+                for (j = 0; j < 4; j++) {
+                    for (k = 0; k < 4; k++) {
+                        colorsSelector += "<div class='colorSelector' data-edit='" + t + "' data-color='#" + clr[3 - i] + clr[3 - j] + clr[3 - k] + "' style='background-color: #" + clr[3 - i] + clr[3 - j] + clr[3 - k] + "'></div>";
+                    }
+                }
+            }
+            return colorsSelector;
+        };
+
         var editorID = $(this).attr("id") + "Editor", thisInput = $(this);
         var toolBar = [
             {
@@ -331,65 +375,70 @@
                     {"ico": "&#xf089c", "title": "Italic", "dataedit": "italic"},
                     {"ico": "&#xf0735", "title": "Strikethrough", "dataedit": "strikethrough"},
                     {"ico": "&#xf0bb8", "title": "Underline", "dataedit": "underline"},
-                    {"ico": "&#xf007f", "title": "Horizontal", "dataedit": "insertHorizontalRule"},
-                    {"ico": "&#xf0973", "title": "Remove Hyperlink", "dataedit": "unlink"}
+                    {"ico": "&#xf0809", "title": "Horizontal", "dataedit": "insertHorizontalRule"}
                 ]
             },
-
             {
                 "dmenu": {
-                    "ico": "&#xf0731;", "title": "Font Size",
+                    "ico": "&#xf072c;", "title": "Font",
                     "dropdownMenu": [
-                        {"dataedit": "fontSize 3", "style": "display: block", "tit": "<font size=\"3\">3</font>"},
-                        {"dataedit": "fontSize 4", "style": "display: block", "tit": "<font size=\"4\">4</font>"},
-                        {"dataedit": "fontSize 5", "style": "display: block", "tit": "<font size=\"5\">5</font>"},
-                        {"dataedit": "fontSize 6", "style": "display: block", "tit": "<font size=\"6\">6</font>"},
-                        {"dataedit": "fontSize 7", "style": "display: block", "tit": "<font size=\"7\">7</font>"}
-                    ]
-                }
-            },
-            {
-                "dmenu": {
-                    "ico": "&#xf089a;", "title": "Font Color",
-                    "dropdownMenu": [
-                        {"dataedit": "foreColor #000000", "style": "color: #000000;display: block", "tit": "Black"},
-                        {"dataedit": "foreColor #0000FF", "style": "color: #0000FF;display: block", "tit": "Blue"},
-                        {"dataedit": "foreColor #30AD23", "style": "color: #30AD23;display: block", "tit": "Green"},
-                        {"dataedit": "foreColor #FF7F00", "style": "color: #FF7F00;display: block", "tit": "Orange"},
-                        {"dataedit": "foreColor #FF0000", "style": "color: #FF0000;display: block", "tit": "Red"},
-                        {"dataedit": "foreColor #FFFF00", "style": "color: #FFFF00;display: block", "tit": "Yellow"}
-                    ]
-                }
-            },
-            {
-                "dmenu": {
-                    "ico": "&#xf05dc;", "title": "Background color",
-                    "dropdownMenu": [
+                        {"dataedit": "fontName Serif", "style": "display: block;font-family:'Serif'", "tit": "Serif"},
+                        {"dataedit": "fontName Arial", "style": "display: block;font-family:'Arial'", "tit": "Arial"},
                         {
-                            "dataedit": "backColor #00FFFF",
-                            "style": "background-color: #00FFFF;display: block",
-                            "tit": "Blue"
+                            "dataedit": "fontName Impact",
+                            "style": "display: block;font-family:'Impact'",
+                            "tit": "Impact"
                         },
                         {
-                            "dataedit": "backColor #00FF00",
-                            "style": "background-color: #00FF00;display: block",
-                            "tit": "Green"
+                            "dataedit": "fontName Arial Black",
+                            "style": "display: block;font-family:'Arial Black'",
+                            "tit": "Arial Black"
                         },
                         {
-                            "dataedit": "backColor #FF7F00",
-                            "style": "background-color: #FF7F00;display: block",
-                            "tit": "Orange"
+                            "dataedit": "fontName Helvetica",
+                            "style": "display: block;font-family:'Helvetica'",
+                            "tit": "Helvetica"
                         },
                         {
-                            "dataedit": "backColor #FF0000",
-                            "style": "background-color: #FF0000;display: block",
-                            "tit": "Red"
+                            "dataedit": "fontName Sans-serif",
+                            "style": "display: block;font-family:'Sans-serif'",
+                            "tit": "Sans-serif"
                         },
                         {
-                            "dataedit": "backColor #FFFF00",
-                            "style": "background-color: #FFFF00;display: block",
-                            "tit": "Yellow"
+                            "dataedit": "fontName verdana",
+                            "style": "display: block;font-family:'verdana'",
+                            "tit": "verdana"
                         }
+                    ]
+                }
+            },
+            {
+                "strHtml": '<a class="btn btn-outline-info dropdown-toggle" data-toggle="dropdown" title="Fore Color"><i data-icon="&#xf089a" class="text-success"></i></a><div class="dropdown-menu dropdown-menu-right" style="width: 200px;">' + getColors('foreColor') + '</div>'
+            },
+            {
+                "strHtml": '<a class="btn btn-outline-info dropdown-toggle bg-success" data-toggle="dropdown" title="Back Color"><i data-icon="&#xf089a"></i></a><div class="dropdown-menu dropdown-menu-right" style="width: 200px;">' + getColors('hiliteColor') + '</div>'
+            },
+            {
+                "dmenu": {
+                    "ico": "&#xf072f;", "title": "Font Size",
+                    "dropdownMenu": [
+                        {"dataedit": "fontSize 3", "style": "display: block", "tit": "<font size=\"3\">size 3</font>"},
+                        {"dataedit": "fontSize 4", "style": "display: block", "tit": "<font size=\"4\">size 4</font>"},
+                        {"dataedit": "fontSize 5", "style": "display: block", "tit": "<font size=\"5\">size 5</font>"},
+                        {"dataedit": "fontSize 6", "style": "display: block", "tit": "<font size=\"6\">size 6</font>"},
+                        {"dataedit": "fontSize 7", "style": "display: block", "tit": "<font size=\"7\">size 7</font>"}
+                    ]
+                }
+            },
+            {
+                "dmenu": {
+                    "ico": "&#xf0731;", "title": "Heading",
+                    "dropdownMenu": [
+                        {"dataedit": "formatBlock h1", "style": "display: block", "tit": "<h1>h1</h1>"},
+                        {"dataedit": "formatBlock h2", "style": "display: block", "tit": "<h2>h2</h2>"},
+                        {"dataedit": "formatBlock h3", "style": "display: block", "tit": "<h3>h3</h3>"},
+                        {"dataedit": "formatBlock h4", "style": "display: block", "tit": "<h4>h4</h4>"},
+                        {"dataedit": "formatBlock h5", "style": "display: block", "tit": "<h5>h5</h5>"}
                     ]
                 }
             },
@@ -398,7 +447,7 @@
                     {"ico": "&#xf081d", "title": "Bullet list", "dataedit": "insertunorderedlist"},
                     {"ico": "&#xf081c", "title": "Number list", "dataedit": "insertorderedlist"},
                     {"ico": "&#xf074c", "title": "Reduce indent", "dataedit": "outdent"},
-                    {"ico": "&#xf074b", "title": "Indent", "dataedit": "indent"},
+                    {"ico": "&#xf074b", "title": "Indent", "dataedit": "indent"}
                 ]
             },
             {
@@ -406,17 +455,23 @@
                     {"ico": "&#xf0747", "title": "Align Left", "dataedit": "justifyleft"},
                     {"ico": "&#xf0748", "title": "Center", "dataedit": "justifycenter"},
                     {"ico": "&#xf0749", "title": "Align Right", "dataedit": "justifyright"},
-                    {"ico": "&#xf074a", "title": "Justify", "dataedit": "justifyfull"},
+                    {"ico": "&#xf074a", "title": "Justify", "dataedit": "justifyfull"}
+                ]
+            },
+            {
+                "btns": [
+                    {"ico": "&#xf04df", "title": "RemoveFormat", "dataedit": "removeFormat"},
+                    {"ico": "&#xf0973", "title": "Remove Hyperlink", "dataedit": "unlink"}
                 ]
             },
             {
                 "strHtml": '<a class="btn btn-outline-info dropdown-toggle" data-toggle="dropdown" title="Hyperlink"><i data-icon="&#xf0d2d"></i></a><div class="dropdown-menu dropdown-menu-right" style="width: 300px;"><div class="input-group p-xl-2"> <input placeholder="URL" type="text" data-edit="createLink" class="form-control"/><div class="input-group-append"> <button class="btn" type="button">Add</button></div> </div></div>'
             },
             {
-                "strHtml": '<span class="btn btn-outline-info" title="Insert picture (or just drag & drop)" id="pictureBtn"> <input style="z-index:10;width: 100%;height:100%;position: absolute;left: 0px;top: 0px; overflow: hidden;font-size: 100px;filter: alpha(opacity=0);opacity: 0;" type="file" name="Image" data-role="magic-overlay" data-target="#pictureBtn" data-edit="insertImage"><i data-icon="&#xf0a80" style="z-index: 10"></i></span>'
+                "strHtml": '<span class="btn btn-outline-info" title="Insert picture (or just drag & drop)" id="pictureBtn"> <input style="z-index:10;width: 100%;height:100%;position: absolute;left: 0px;top: 0px; overflow: hidden;font-size: 100px;filter: alpha(opacity=0);opacity: 0;" type="file" name="Image" accept="image/*" data-role="magic-overlay" data-target="#pictureBtn" data-edit="insertImage"><i data-icon="&#xf0a80" style="z-index: 10"></i></span>'
             },
             {
-                "strHtml": '<a class="btn btn-outline-info" data-edit="clearformat" title="Clear Formatting" onClick="$(\'#' + editorID + '\').html($(\'#' + editorID + '\').text());"><i data-icon="&#xf0995"></i></a>'
+                "strHtml": '<span class="btn btn-outline-info" title="Attach file (or just drag & drop)" id="attachFileBtn"> <input style="z-index:10;width: 100%;height:100%;position: absolute;left: 0px;top: 0px; overflow: hidden;font-size: 100px;filter: alpha(opacity=0);opacity: 0;" type="file" name="attachFile" data-role="magic-overlay" data-target="#attachFileBtn" data-edit="insertFile"><i data-icon="&#xf00c0" style="z-index: 10"></i></span>'
             },
             {
                 "strHtml": '<a class="btn btn-outline-info" title="Full Screen" data-fullscreen="' + editorID + '"><i data-icon="&#xf0157"></i></a>'
@@ -424,17 +479,22 @@
         ];
 
         if (editorHeight === undefined) editorHeight = "300";
-        var toolBarHtml = '<div id="' + editorID + 'Wrap" style="height:' + editorHeight + 'px;width:100%"><div class="btn-toolbar w-100 bg-light p-1 border border-bottom-0 rounded-top" data-role="editor-toolbar" data-target="#' + editorID + '">';
+        var toolBarHtml = "<style> #" + editorID + "{padding: 4px} .btn-toolbar ul li{cursor: pointer;}.colorSelector{height: 20px;width: 20px;margin: 2px;float: left;}</style>";
+        toolBarHtml += '<div id="' + editorID + 'Wrap" style="height:' + editorHeight + 'px;width:100%;z-index:1050;left:0;top:0"><div class="btn-toolbar w-100 bg-light p-1 border border-bottom-0 rounded-top" data-role="editor-toolbar" data-target="#' + editorID + '">';
         for (var i in toolBar) {
-            toolBarHtml += ' <div class="btn-group btn-group-sm">';
-            for (var j in toolBar[i].btns) {
-                toolBarHtml += ' <a class="btn btn-outline-info" data-edit="' + toolBar[i].btns[j].dataedit + '" title="' + toolBar[i].btns[j].title + '"><i data-icon="' + toolBar[i].btns[j].ico + '"></i></a>';
-            }
+            toolBarHtml += ' <div class="btn-group btn-group-sm mr-1">';
+            if (toolBar[i].btns !== undefined)
+                for (var j in toolBar[i].btns) {
+                    toolBarHtml += ' <a class="btn btn-outline-info" data-edit="' + toolBar[i].btns[j].dataedit + '" title="' + toolBar[i].btns[j].title + '"><i data-icon="' + toolBar[i].btns[j].ico + '"></i></a>';
+                }
             if (toolBar[i].dmenu !== undefined) {
                 toolBarHtml += ' <a class="btn btn-outline-info dropdown-toggle" data-toggle="dropdown" title="' + toolBar[i].dmenu.title + '"><i data-icon="' + toolBar[i].dmenu.ico + '"></i><b class="caret"></b></a>';
                 toolBarHtml += ' <ul class="dropdown-menu">';
                 for (var k in toolBar[i].dmenu.dropdownMenu) {
-                    toolBarHtml += '<li><a data-edit="' + toolBar[i].dmenu.dropdownMenu[k].dataedit + '" style="' + toolBar[i].dmenu.dropdownMenu[k].style + '">' + toolBar[i].dmenu.dropdownMenu[k].tit + '</li>';
+                    if (toolBar[i].dmenu.dropdownMenu[k].dataedit != null && toolBar[i].dmenu.dropdownMenu[k].dataedit != '')
+                        toolBarHtml += '<li><a data-edit="' + toolBar[i].dmenu.dropdownMenu[k].dataedit + '" style="' + toolBar[i].dmenu.dropdownMenu[k].style + '">' + toolBar[i].dmenu.dropdownMenu[k].tit + '</a></li>';
+                    else
+                        toolBarHtml += '<li><a style="' + toolBar[i].dmenu.dropdownMenu[k].style + '">' + toolBar[i].dmenu.dropdownMenu[k].tit + '</a></li>';
                 }
                 toolBarHtml += '</ul>';
             }
@@ -444,10 +504,10 @@
             toolBarHtml += '</div>';
         }
         toolBarHtml += '</div>';
-        toolBarHtml += '<div id="' + editorID + '" data-editor="' + editorID + '" class="lead bg-white w-100 border border-top-0 rounded-bottom" data-placeholder="Enter here..." style="overflow: scroll; "></div></div>';
+        toolBarHtml += '<div id="' + editorID + '" data-editor="' + editorID + '" class="lead bg-white w-100 border border-top-0 rounded-bottom" data-placeholder="Enter here..." style="overflow: scroll; ">'+$(this).val()+'</div></div>';
         $(this).before(toolBarHtml);
 
-        $('#' + editorID).wysiwyg();
+        $('#' + editorID).wysiwyg(userOptions);
         $("#" + editorID).height(($("#" + editorID + "Wrap").height() - 40) + 'px');
 
         var formObj = $(this).parents('form')[0];
@@ -455,7 +515,7 @@
             $(thisInput).val($.fn.wysiwyg.getHtml($('#' + editorID), ifImgConvert));
         });
 
-        $(document).on("click", "#" + editorID + " a", function () {
+        $(document).on("dblclick", "#" + editorID + " a", function () {
             var url = $(this).attr("href");
             var obj = $(this);
             alertify.prompt('URL', '', url
@@ -466,7 +526,7 @@
                 }
             );
         });
-        $(document).on("click", "#" + editorID + " img", function () {
+        $(document).on("dblclick", "#" + editorID + " img", function () {
             var obj = $(this);
             var width = $(this).width();
             //var height = $(this).height();
@@ -482,11 +542,11 @@
             var editorID = $(this).attr("data-fullscreen");
             var h = $("#" + editorID + "Wrap").height();
             if (h == editorHeight) {
-                $("#" + editorID + "Wrap").css({'height': '100vh', 'position': 'absolute', 'top': '0'});
+                $("#" + editorID + "Wrap").css({'height': '100vh', 'position': 'fixed'});
                 $("#" + editorID).height(($("#" + editorID + "Wrap").height() - 40) + 'px');
             }
             else {
-                $("#" + editorID + "Wrap").css({'height': editorHeight + 'px', 'position': 'relative', 'top': '0'});
+                $("#" + editorID + "Wrap").css({'height': editorHeight + 'px', 'position': 'relative'});
                 $("#" + editorID).height(($("#" + editorID + "Wrap").height() - 40) + 'px');
             }
         });

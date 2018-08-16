@@ -1,3 +1,7 @@
+/*!
+ * Bootstrap4 wyswyg 1.0
+ * By leefine chan
+ */
 (function (window, $) {
     "use strict";
 
@@ -13,8 +17,9 @@
             selectionColor: "blue",
             dragAndDropImages: true,
             upload_img_type: 'bmp|gif|jpg|jpeg|png',
-            upload_doc_type: 'doc|docx|xls|xlsx|ppt|pptx|ppsx|pdf',
-            upload_file_max_size_m: 50,
+            upload_doc_type: 'doc|docx|xls|xlsx|ppt|pptx|ppsx|pdf|zip',
+            upload_video_type: 'mp4',
+            upload_file_max_size_m: 10,
             fileUploadError: function (reason, detail) {
                 console.log("File upload error", reason, detail);
             }
@@ -22,12 +27,13 @@
 
         var options = $.extend(true, {}, defaults, userOptions);
         var toolbarBtnSelector = "a[data-" + options.commandRole + "],button[data-" + options.commandRole + "],input[type=button][data-" + options.commandRole + "]";
+        var toolbar = $(options.toolbarSelector);
+
+        this.bindToolbar(editor, toolbar, options, toolbarBtnSelector);
 
         if (options.dragAndDropImages) {
-            this.initFileDrops(editor, options, toolbarBtnSelector);
+            this.initFileDrops(editor, toolbar, options, toolbarBtnSelector);
         }
-
-        this.bindToolbar(editor, $(options.toolbarSelector), options, toolbarBtnSelector);
 
         editor.attr({"contenteditable": true, "designMode": 'On'})
             .on("mouseup mouseout keyup", function () {
@@ -37,7 +43,6 @@
             .on('keydown', function (e) {
                 if (e.keyCode === 13) {
                     document.execCommand('insertHTML', false, '<br/><br/>');
-
                     return false;
                 }
             }.bind(this));
@@ -84,18 +89,15 @@
 
     Wysiwyg.prototype.execCommand = function (commandWithArgs, valueArg, editor, options, toolbarBtnSelector) {
         if (commandWithArgs == null || commandWithArgs == '')return;
-        var commandArr = commandWithArgs.split(" "),
-            command = commandArr.shift(),
+        var commandArr = commandWithArgs.split(" "), command = commandArr.shift(),
             args = commandArr.join(" ") + ( valueArg || "" );
 
-        var parts = commandWithArgs.split("-");
-
-        if (parts.length === 1) {
-            document.execCommand(command, false, args);
-        } else if (parts[0] === "format" && parts.length === 2) {
-            document.execCommand("formatBlock", false, parts[1]);
-        }
-
+        //var parts = commandWithArgs.split("-");
+        //if (parts.length === 1) {
+        document.execCommand(command, false, args);
+        /*} else if (parts[0] === "format" && parts.length === 2) {
+         document.execCommand("formatBlock", false, parts[1]);
+         }*/
         ( editor ).trigger("change");
         this.updateToolbar(editor, toolbarBtnSelector, options);
     };
@@ -137,63 +139,130 @@
         }
     };
 
-    // Adding Toggle HTML based on the work by @jd0000, but cleaned up a little to work in this context.
-    Wysiwyg.prototype.toggleHtmlEdit = function (editor) {
-        if (editor.data("wysiwyg-html-mode") !== true) {
-            var oContent = editor.html();
-            var editorPre = $("<pre />");
-            $(editorPre).append(document.createTextNode(oContent));
-            $(editorPre).attr("contenteditable", true);
-            $(editor).html(" ");
-            $(editor).append($(editorPre));
-            $(editor).attr("contenteditable", false);
-            $(editor).data("wysiwyg-html-mode", true);
-            $(editorPre).focus();
-        } else {
-            $(editor).html($(editor).text());
-            $(editor).attr("contenteditable", true);
-            $(editor).data("wysiwyg-html-mode", false);
-            $(editor).focus();
-        }
-    };
-
-    Wysiwyg.prototype.insertFiles = function (files, fileInputName, options, editor, toolbarBtnSelector) {
+    Wysiwyg.prototype.insertFiles = function (files, fileInputName, options, editor, toolbar, toolbarBtnSelector, fileSelector) {
         var self = this;
+        var imgReg = new RegExp(options.upload_img_type);
+        var docReg = new RegExp(options.upload_doc_type);
+        var videoReg = new RegExp(options.upload_video_type);
+        var checkFile = true;
         $.each(files, function (idx, fileInfo) {
-            if (fileInfo.size > (options.upload_file_max_size_m * 1024 * 1024)) {
-                alertify_ex.alert(fileInfo.name + ' is too big,max size is ' + maxUploadSizeByte + 'M');
-                return true;
-            }
-            var imgReg = new RegExp(options.upload_img_type);
-            var docReg = new RegExp(options.upload_doc_type);
-            if ((fileInputName == 'Image' || fileInputName == 'drag') && /^image\//.test(fileInfo.type) && imgReg.test(fileInfo.name.toLowerCase())) {
-                $.when(self.readFileIntoDataUrl(fileInfo)).done(function (dataUrl) {
-                    self.execCommand("insertimage", dataUrl, editor, options, toolbarBtnSelector);
-                    editor.trigger("image-inserted");
-                }).fail(function (e) {
-                    alertify_ex.alert('Read file failed');
-                    options.fileUploadError("file-reader", e);
-                });
-            } else if ((fileInputName == 'attachFile' || fileInputName == 'drag') && /^application\//.test(fileInfo.type) && docReg.test(fileInfo.name.toLowerCase())) {
-                $.when(self.readFileIntoDataUrl(fileInfo)).done(function (dataUrl) {
-                    var uuid = $.fn.wysiwyg.guid();
-                    var fileName = relpath + "/res/post_file/" + uuid + fileInfo.name.substring(fileInfo.name.lastIndexOf("."), fileInfo.name.length);
-                    $(editor).after("<input value='" + uuid + "~" + dataUrl + "' type='hidden' name='post_file'/>");
-                    document.execCommand("insertHTML", false, '<br/><a href="' + fileName + '" class="icon-file text-danger">' + fileInfo.name + '</a><br/>');
-                }).fail(function (e) {
-                    alertify_ex.alert('Read file failed');
-                    options.fileUploadError("file-reader", e);
-                });
-            }
-            else {
+                if (fileInfo.size > (options.upload_file_max_size_m * 1024 * 1024)) {
+                    $.fn_ex.alert(fileInfo.name + ' is too big,max size is ' + options.upload_file_max_size_m + 'M');
+                    return;
+                }
                 var eMsg = "";
-                if (fileInputName == 'Image') eMsg = options.upload_img_type;
-                if (fileInputName == 'attachFile') eMsg = options.upload_doc_type;
-                if (eMsg.length < 1) eMsg = options.upload_img_type + '|' + options.upload_doc_type;
-                alertify_ex.alert('Unsupported file type! Please upload type:' + eMsg);
-                options.fileUploadError("unsupported-file-type", fileInfo.type);
+                if (fileInputName == 'insertImage') {
+                    if (!(/^image\//.test(fileInfo.type) && imgReg.test(fileInfo.name.toLowerCase()))) {
+                        eMsg = options.upload_img_type;
+                        $.fn_ex.alert('Unsupported file type! Please upload type:' + eMsg);
+                        checkFile = false;
+                        return false;
+                    }
+                }
+                if (fileInputName == 'insertFile') {
+                    if (!(/^application\//.test(fileInfo.type) && docReg.test(fileInfo.name.toLowerCase()))) {
+                        eMsg = options.upload_doc_type;
+                        $.fn_ex.alert('Unsupported file type! Please upload type:' + eMsg);
+                        checkFile = false;
+                        return false;
+                    }
+                }
+                if (fileInputName == 'insertVideo') {
+                    if (!(/^video\//.test(fileInfo.type) && videoReg.test(fileInfo.name.toLowerCase()))) {
+                        eMsg = options.upload_video_type;
+                        $.fn_ex.alert('Unsupported file type! Please upload type:' + eMsg);
+                        checkFile = false;
+                        return false;
+                    }
+                }
             }
-        });
+        );
+        if (!checkFile)return;
+
+        if (fileInputName == 'insertFile' && fileSelector !== undefined) {//大文件通过按钮上传
+            // input:file value不可以动态赋值，如何处理？？？
+            // $(editor).after("<input value='" + $(fileSelector).val() + "' type='file' name='" + fileInfo.name + "'/>");
+            //移动选中的file并从新复制一个file到选择框
+            var uuid = $.fn_ex.guid()
+            if (files.length > 1) {
+                $(editor).after(fileSelector);
+                $('#attachFileBtn' + $(editor).attr("id")).prepend($(fileSelector).clone());
+                $(fileSelector).removeAttr('data-role data-edit data-target');
+                $(fileSelector).attr("name", uuid);
+                $.each(files, function (idx, fileInfo) {
+                    var mimeType = fileInfo.name.substring(fileInfo.name.lastIndexOf("."), fileInfo.name.length);
+                    document.execCommand("insertHTML", false, '<a href="' + options.upload_file_dir + uuid + '_' + idx + mimeType + '" class="icon-file text-danger">' + fileInfo.name + '</a><br/><br/>');
+                });
+            } else {
+                var mimeType = files[0].name.substring(files[0].name.lastIndexOf("."), files[0].name.length);
+                $(editor).after(fileSelector);
+                $('#attachFileBtn' + $(editor).attr("id")).prepend($(fileSelector).clone());
+                $(fileSelector).removeAttr('data-role data-edit data-target');
+                $(fileSelector).attr("name", uuid);
+                document.execCommand("insertHTML", false, '<a href="' + options.upload_file_dir + uuid + mimeType + '" class="icon-file text-danger">' + files[0].name + '</a><br/><br/>');
+            }
+            self.bindFileSelect(editor, toolbar, options, toolbarBtnSelector)
+        }
+        else if (fileInputName == 'insertVideo' && fileSelector !== undefined) {//大视频文件通过按钮上传
+            // input:file value不可以动态赋值，如何处理？？？
+            // $(editor).after("<input value='" + $(fileSelector).val() + "' type='file' name='" + fileInfo.name + "'/>");
+            //移动选中的file并从新复制一个file到选择框
+            var uuid = $.fn_ex.guid();
+            if (files.length > 1) {
+                $(editor).after(fileSelector);
+                $('#attachVideoBtn' + $(editor).attr("id")).prepend($(fileSelector).clone());
+                $(fileSelector).removeAttr('data-role data-edit data-target');
+                $(fileSelector).attr("name", uuid);
+                $.each(files, function (idx, fileInfo) {
+                    var mimeType = fileInfo.name.substring(fileInfo.name.lastIndexOf("."), fileInfo.name.length);
+                    document.execCommand("insertHTML", false, '<video src="' + options.upload_file_dir + uuid + '_' + idx + mimeType + '" controls></video><br/><br/>');
+                });
+            } else {
+                var mimeType = files[0].name.substring(files[0].name.lastIndexOf("."), files[0].name.length);
+                $(editor).after(fileSelector);
+                $('#attachVideoBtn' + $(editor).attr("id")).prepend($(fileSelector).clone());
+                $(fileSelector).removeAttr('data-role data-edit data-target');
+                $(fileSelector).attr("name", uuid);
+                document.execCommand("insertHTML", false, '<video src="' + options.upload_file_dir + uuid + mimeType + '" controls></video><br/><br/>');
+            }
+            self.bindFileSelect(editor, toolbar, options, toolbarBtnSelector)
+        }
+        else {//文件视频拖动不能大于2M （保证速度）， 图片上传及拖动
+            $.each(files, function (idx, fileInfo) {
+                if (fileInfo.size > (2 * 1024 * 1024) && fileInputName == 'drag') {
+                    $.fn_ex.alert('The file you draging cant be bigger than 2M!');
+                    return false;
+                }
+                if (/^application\//.test(fileInfo.type) && docReg.test(fileInfo.name.toLowerCase())) {
+                    $.when(self.readFileIntoDataUrl(fileInfo)).done(function (dataUrl) {
+                        var uuid = $.fn_ex.guid();
+                        var fileName = options.upload_file_dir + uuid + fileInfo.name.substring(fileInfo.name.lastIndexOf("."), fileInfo.name.length);
+                        document.execCommand("insertHTML", false, '<a href="' + fileName + '" class="icon-file text-danger">' + fileInfo.name + '</a><br/><br/>');
+                        $(editor).after("<input value='" + uuid + "~" + dataUrl + "' type='hidden' name='post_file'/>");
+                    }).fail(function (e) {
+                        $.fn_ex.alert('Read file failed');
+                        options.fileUploadError("file-reader", e);
+                    });
+                }
+                if (/^image\//.test(fileInfo.type) && imgReg.test(fileInfo.name.toLowerCase())) {
+                    $.when(self.readFileIntoDataUrl(fileInfo)).done(function (dataUrl) {
+                        self.execCommand("insertimage", dataUrl, editor, options, toolbarBtnSelector);
+                        editor.trigger("image-inserted");
+                    }).fail(function (e) {
+                        $.fn_ex.alert('Read file failed');
+                        options.fileUploadError("file-reader", e);
+                    });
+                }
+                if (/^video\//.test(fileInfo.type) && videoReg.test(fileInfo.name.toLowerCase())) {
+                    $.when(self.readFileIntoDataUrl(fileInfo)).done(function (dataUrl) {
+                        document.execCommand("insertHTML", false, '<video src="' + dataUrl + '" controls></video><br/><br/>');
+                    }).fail(function (e) {
+                        $.fn_ex.alert('Read file failed');
+                        options.fileUploadError("file-reader", e);
+                    });
+                }
+            });
+        }
     };
 
     Wysiwyg.prototype.markSelection = function (color, options) {
@@ -204,7 +273,7 @@
         this.saveSelection();
     };
 
-    //Move selection to a particular element
+//Move selection to a particular element
     function selectElementContents(element) {
         if (window.getSelection && document.createRange) {
             var selection = window.getSelection();
@@ -225,7 +294,7 @@
             self.restoreSelection();
             editor.focus();
 
-            if (editor.data(options.commandRole) === "html") {
+            if ($(this).data(options.commandRole) == "html") {
                 self.toggleHtmlEdit(editor);
             } else {
                 self.execCommand($(this).data(options.commandRole), null, editor, options, toolbarBtnSelector);
@@ -266,7 +335,7 @@
             var cmdBtn = $(this).data(options.commandRole);
             self.restoreSelection();
             if (cmdBtn == ('hiliteColor') || cmdBtn == 'backColor') {
-                var cR = document.execCommand(cmdBtn, false, $(this).attr('data-color'));
+                document.execCommand(cmdBtn, false, $(this).attr('data-color'));
                 return;
             }
             else if (cmdBtn == 'foreColor') {
@@ -274,31 +343,34 @@
                 self.saveSelection();
             }
             else {
-                self.execCommand(cmdBtn, null, editor, options, toolbarBtnSelector);
-                self.saveSelection();
+                return;
             }
         }).on("blur", function () {
             var input = $(this);
             self.markSelection(false, options);
         });
+        self.bindFileSelect(editor, toolbar, options, toolbarBtnSelector);
+    };
+
+    Wysiwyg.prototype.bindFileSelect = function (editor, toolbar, options, toolbarBtnSelector) {
+        var self = this;
         toolbar.find("input[type=file][data-" + options.commandRole + "]").change(function () {
             self.restoreSelection();
             if (this.type === "file" && this.files && this.files.length > 0) {
-                self.insertFiles(this.files, this.name, options, editor, toolbarBtnSelector);
+                self.insertFiles(this.files, $(this).attr("data-" + options.commandRole), options, editor, toolbar, toolbarBtnSelector, this);
             }
             self.saveSelection();
-            this.value = "";
         });
     };
 
-    Wysiwyg.prototype.initFileDrops = function (editor, options, toolbarBtnSelector) {
+    Wysiwyg.prototype.initFileDrops = function (editor, toolbar, options, toolbarBtnSelector) {
         var self = this;
         editor.on("dragenter dragover", false).on("drop", function (e) {
             var dataTransfer = e.originalEvent.dataTransfer;
             e.stopPropagation();
             e.preventDefault();
             if (dataTransfer && dataTransfer.files && dataTransfer.files.length > 0) {
-                self.insertFiles(dataTransfer.files, 'drag', options, editor, toolbarBtnSelector);
+                self.insertFiles(dataTransfer.files, 'drag', options, editor, toolbar, toolbarBtnSelector);
             }
         });
     };
@@ -312,27 +384,61 @@
         var wysiwyg = new Wysiwyg(this, userOptions);
     };
 
-    $.fn.wysiwyg.guid = function () {
-        function S4() {
-            return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
-        }
+    /*    $.fn.wysiwyg.getHtml = function (container, options) {
+     if (options.base64_to_file !== undefined && options.base64_to_file == true) {
+     var gGal = $.parseHTML('<div>' + $(container).html() + '</div>');
+     if ($(gGal).has("img").length) {
+     var gImages = $("img", $(gGal));
+     $.each(gImages, function (i, v) {
+     if ($(v).attr("src").match(/^data:image\/.*$/)) {
+     var uuid = $.fn.wysiwyg.guid();
+     $(container).after("<input value='" + uuid + "~" + $(v).attr("src") + "' type='hidden' name='post_img'/>");
+     var picName = uuid + '.' + $(v).attr("src").substring($(v).attr("src").indexOf("/") + 1, $(v).attr("src").indexOf(";"));//后缀名
+     $(v).attr("src", options.upload_img_dir + picName);
+     }
+     });
+     }
+     if ($(gGal).has("video").length) {
+     var gImages = $("video", $(gGal));
+     $.each(gImages, function (i, v) {
+     if ($(v).attr("src").match(/^data:video\/.*$/)) {
+     var uuid = $.fn.wysiwyg.guid();
+     $(container).after("<input value='" + uuid + "~" + $(v).attr("src") + "' type='hidden' name='post_file'/>");
+     var videoName = uuid + '.' + $(v).attr("src").substring($(v).attr("src").indexOf("/") + 1, $(v).attr("src").indexOf(";"));//后缀名
+     $(v).attr("src", options.upload_file_dir + videoName);
+     }
+     });
+     }
+     return $(gGal).html();
+     }
+     else {
+     return $(container).html();
+     }
+     };*/
 
-        return (S4() + S4() + "-" + S4() + "-" + S4() + "-" + S4() + "-" + S4() + S4() + S4());
-    };
-
-    $.fn.wysiwyg.getHtml = function (container, ifImgConvert) {
-        if (ifImgConvert !== undefined && ifImgConvert == true) {
+    $.fn.getWysiwygHtml = function (options) {
+        var container = this;
+        if (options.base64_to_file !== undefined && options.base64_to_file == true) {
             var gGal = $.parseHTML('<div>' + $(container).html() + '</div>');
             if ($(gGal).has("img").length) {
                 var gImages = $("img", $(gGal));
-                var ifExistImg = false;
                 $.each(gImages, function (i, v) {
                     if ($(v).attr("src").match(/^data:image\/.*$/)) {
-                        var uuid = $.fn.wysiwyg.guid();
-                        var picName = uuid + '.' + $(v).attr("src").substring($(v).attr("src").indexOf("/") + 1, $(v).attr("src").indexOf(";"));//后缀名
+                        var uuid = $.fn_ex.guid();
                         $(container).after("<input value='" + uuid + "~" + $(v).attr("src") + "' type='hidden' name='post_img'/>");
-                        $(v).attr("src", relpath + "/res/post_img/" + picName);
-                        ifExistImg = true;
+                        var picName = uuid + '.' + $(v).attr("src").substring($(v).attr("src").indexOf("/") + 1, $(v).attr("src").indexOf(";"));//后缀名
+                        $(v).attr("src", options.upload_img_dir + picName);
+                    }
+                });
+            }
+            if ($(gGal).has("video").length) {
+                var gImages = $("video", $(gGal));
+                $.each(gImages, function (i, v) {
+                    if ($(v).attr("src").match(/^data:video\/.*$/)) {
+                        var uuid = $.fn_ex.guid();
+                        $(container).after("<input value='" + uuid + "~" + $(v).attr("src") + "' type='hidden' name='post_file'/>");
+                        var videoName = uuid + '.' + $(v).attr("src").substring($(v).attr("src").indexOf("/") + 1, $(v).attr("src").indexOf(";"));//后缀名
+                        $(v).attr("src", options.upload_file_dir + videoName);
                     }
                 });
             }
@@ -347,7 +453,13 @@
      * 初始化编辑器
      * @param ifImgConvert 是否转换Base64图片
      */
-    $.fn.initWysiwyg = function (ifImgConvert, editorHeight, userOptions) {
+    $.fn.initWysiwyg = function (userOptions) {
+        if (userOptions.editor_height === undefined) userOptions.editor_height = "300";
+        if (userOptions.upload_file_dir === undefined || userOptions.upload_img_dir === undefined) {
+            alert("userOptions.upload_file_dir or userOptions.upload_img_dir can't be empty!");
+            return;
+        }
+
         var getColors = function (t) {
             var clr = new Array('00', '50', 'A0', 'FF'),
                 colorsSelector = "";
@@ -420,7 +532,7 @@
             },
             {
                 "dmenu": {
-                    "ico": "&#xf072f;", "title": "Font Size",
+                    "ico": "&#xf0731;", "title": "Font Size",
                     "dropdownMenu": [
                         {"dataedit": "fontSize 3", "style": "display: block", "tit": "<font size=\"3\">size 3</font>"},
                         {"dataedit": "fontSize 4", "style": "display: block", "tit": "<font size=\"4\">size 4</font>"},
@@ -432,8 +544,9 @@
             },
             {
                 "dmenu": {
-                    "ico": "&#xf0731;", "title": "Heading",
+                    "ico": "H1", "title": "Heading",
                     "dropdownMenu": [
+                        {"dataedit": "formatBlock p", "style": "display: block", "tit": "<h1>P</h1>"},
                         {"dataedit": "formatBlock h1", "style": "display: block", "tit": "<h1>h1</h1>"},
                         {"dataedit": "formatBlock h2", "style": "display: block", "tit": "<h2>h2</h2>"},
                         {"dataedit": "formatBlock h3", "style": "display: block", "tit": "<h3>h3</h3>"},
@@ -465,22 +578,29 @@
                 ]
             },
             {
-                "strHtml": '<a class="btn btn-outline-info dropdown-toggle" data-toggle="dropdown" title="Hyperlink"><i data-icon="&#xf0d2d"></i></a><div class="dropdown-menu dropdown-menu-right" style="width: 300px;"><div class="input-group p-xl-2"> <input placeholder="URL" type="text" data-edit="createLink" class="form-control"/><div class="input-group-append"> <button class="btn" type="button">Add</button></div> </div></div>'
+                "strHtml": '<a class="btn btn-outline-info dropdown-toggle" data-toggle="dropdown" title="Hyperlink"><i data-icon="&#xf0d2d"></i></a><div class="dropdown-menu dropdown-menu-right" style="width: 300px;"><div class="input-group p-xl-2"> <input placeholder="URL" type="text" data-edit="createLink" class="form-control"/><div class="input-group-append"> <button class="btn-info" type="button">Add</button></div> </div></div>'
             },
             {
-                "strHtml": '<span class="btn btn-outline-info" title="Insert picture (or just drag & drop)" id="pictureBtn"> <input style="z-index:10;width: 100%;height:100%;position: absolute;left: 0px;top: 0px; overflow: hidden;font-size: 100px;filter: alpha(opacity=0);opacity: 0;" type="file" name="Image" accept="image/*" data-role="magic-overlay" data-target="#pictureBtn" data-edit="insertImage"><i data-icon="&#xf0a80" style="z-index: 10"></i></span>'
+                "strHtml": '<a class="btn btn-outline-info" title="Insert Table" id="insertTable' + editorID + '"><i data-icon="&#xf0740"></i></a>'
             },
             {
-                "strHtml": '<span class="btn btn-outline-info" title="Attach file (or just drag & drop)" id="attachFileBtn"> <input style="z-index:10;width: 100%;height:100%;position: absolute;left: 0px;top: 0px; overflow: hidden;font-size: 100px;filter: alpha(opacity=0);opacity: 0;" type="file" name="attachFile" data-role="magic-overlay" data-target="#attachFileBtn" data-edit="insertFile"><i data-icon="&#xf00c0" style="z-index: 10"></i></span>'
+                "strHtml": '<span class="btn btn-outline-info" title="Insert picture (or just drag & drop)" id="pictureBtn' + editorID + '"><input style="z-index:10;width: 2rem;height:2rem;position: absolute;left: 0px;top: 0px; overflow: hidden;font-size: 100px;filter: alpha(opacity=0);opacity: 0;" type="file"  accept="image/*" data-role="magic-overlay" multiple="multiple" data-target="#pictureBtn' + editorID + '" data-edit="insertImage"/><i data-icon="&#xf0a80" style="z-index: 10"></i></span>'
+            },
+            {
+                "strHtml": '<span class="btn btn-outline-info" title="Attach file (or just drag & drop)" id="attachFileBtn' + editorID + '"><input style="z-index:10;width: 2rem;height:2rem;position: absolute;left: 0px;top: 0px; overflow: hidden;font-size: 100px;filter: alpha(opacity=0);opacity: 0;" type="file" data-role="magic-overlay" multiple="multiple"  data-target="#attachFileBtn' + editorID + '" data-edit="insertFile"/><i data-icon="&#xf00c0" style="z-index: 10"></i></span>'
+            },
+            {
+                "strHtml": '<span class="btn btn-outline-info" title="Attach video (or just drag & drop)" id="attachVideoBtn' + editorID + '"><input style="z-index:10;width: 2rem;height:2rem;position: absolute;left: 0px;top: 0px; overflow: hidden;font-size: 100px;filter: alpha(opacity=0);opacity: 0;" type="file" data-role="magic-overlay" multiple="multiple" data-target="#attachVideoBtn' + editorID + '" data-edit="insertVideo"/><i data-icon="&#xf05e3" style="z-index: 10"></i></span>'
+            },
+            {
+                "strHtml": '<span title="Html" class="btn btn-info" data-htmlview="' + editorID + '">Html</span>'
             },
             {
                 "strHtml": '<a class="btn btn-outline-info" title="Full Screen" data-fullscreen="' + editorID + '"><i data-icon="&#xf0157"></i></a>'
             }
         ];
-
-        if (editorHeight === undefined) editorHeight = "300";
-        var toolBarHtml = "<style> #" + editorID + "{padding: 4px} .btn-toolbar ul li{cursor: pointer;}.colorSelector{height: 20px;width: 20px;margin: 2px;float: left;}</style>";
-        toolBarHtml += '<div id="' + editorID + 'Wrap" style="height:' + editorHeight + 'px;width:100%;z-index:1050;left:0;top:0"><div class="btn-toolbar w-100 bg-light p-1 border border-bottom-0 rounded-top" data-role="editor-toolbar" data-target="#' + editorID + '">';
+        var toolBarHtml = "<style> #" + editorID + "{padding: 4px} .btn-toolbar ul li{cursor: pointer;}.colorSelector{height: 20px;width: 20px;margin: 2px;float: left;} .btn-toolbar .btn{padding: 0.2rem 0.4rem;font-size: 0.75rem;height: 1.6rem;}</style>";
+        toolBarHtml += '<div id="' + editorID + 'Wrap" style="height:' + userOptions.editor_height + 'px;width:100%;z-index:1050;left:0;top:0"><div id="' + editorID + 'ToolBar" class="btn-toolbar w-100 bg-light p-2 border border-bottom-0 rounded-top" data-role="editor-toolbar" data-target="#' + editorID + '">';
         for (var i in toolBar) {
             toolBarHtml += ' <div class="btn-group btn-group-sm mr-1">';
             if (toolBar[i].btns !== undefined)
@@ -504,17 +624,46 @@
             toolBarHtml += '</div>';
         }
         toolBarHtml += '</div>';
-        toolBarHtml += '<div id="' + editorID + '" data-editor="' + editorID + '" class="lead bg-white w-100 border border-top-0 rounded-bottom" data-placeholder="Enter here..." style="overflow: scroll; ">'+$(this).val()+'</div></div>';
+        toolBarHtml += '<div id="' + editorID + '" data-editor="' + editorID + '" class="ignore lead bg-white w-100 border border-top-0 rounded-bottom" data-placeholder="Enter here..." style="overflow: scroll; ">' + $(this).val() + '</div>';
+        toolBarHtml += '<textarea  id="' + editorID + 'Html"  class="bg-white w-100 border border-top-0 rounded-bottom d-none"></textarea>';
+        toolBarHtml += '</div>';
         $(this).before(toolBarHtml);
 
         $('#' + editorID).wysiwyg(userOptions);
-        $("#" + editorID).height(($("#" + editorID + "Wrap").height() - 40) + 'px');
+        $("#" + editorID).height(($("#" + editorID + "Wrap").height() - 50) + 'px');
+        $("#" + editorID + "Html").height(($("#" + editorID + "Wrap").height() - 50) + 'px');
+        $(document).on("click", "#insertTable" + editorID, function () {
+            alertify.confirm("Table propertes", "Rows:<input type='number' id='" + editorID + "TableRows' value='3' class='form-control' />" +
+                "Colums:<input type='number' id='" + editorID + "TableColums'  value='3' class='form-control' />" +
+                "Width:<div class='input-group'><input id='" + editorID + "TableWidth' type='number' value='100' class='form-control'/><select id='" + editorID + "TableWidthUnit' class='form-control'><option value='%'>%</option><option value='px'>px</option></select></div>" +
+                "Border:<div class='input-group'><input id='" + editorID + "TableBorder' type='number' class='form-control' value='1'/><input id='" + editorID + "TableBorderColor' type='color' class='form-control' value='#9a9a9a'/></div>" +
+                "Row height(px):<input id='" + editorID + "TableRowHeight' class='form-control' type='number' value='30'/>",
+                function () {
+                    var tabelRows = parseInt($("#" + editorID + "TableRows").val()),
+                        tabelColums = parseInt($("#" + editorID + "TableColums").val()),
+                        tabelWidth = parseInt($("#" + editorID + "TableWidth").val()),
+                        tableWidthUnit = $("#" + editorID + "TableWidthUnit").val(),
+                        tableBorder = parseInt($("#" + editorID + "TableBorder").val()),
+                        tableBorderColor = $("#" + editorID + "TableBorderColor").val(),
+                        tableRowHeight = parseInt($("#" + editorID + "TableRowHeight").val());
 
-        var formObj = $(this).parents('form')[0];
-        $(formObj).submit(function (e) {
-            $(thisInput).val($.fn.wysiwyg.getHtml($('#' + editorID), ifImgConvert));
+                    var tableHtml = '<table style="width:' + tabelWidth + tableWidthUnit + '" border="' + tableBorder + 'px" bordercolor="' + tableBorderColor + '">';
+                    for (var x = 0; x < tabelRows; x++) {
+                        tableHtml += '<tr style="height: ' + tableRowHeight + 'px">';
+                        for (var y = 0; y < tabelColums; y++) {
+                            tableHtml += '<td  border="' + tableBorder + 'px" bordercolor="' + tableBorderColor + '"></td>';
+                        }
+                        tableHtml += '</tr>';
+                    }
+                    $('#' + editorID).append(tableHtml);
+
+                }, function () {
+                });
         });
-
+        $('#' + editorID).focus();
+        $($(this).parents('form')[0]).submit(function (e) {
+            $(thisInput).val($('#' + editorID).getWysiwygHtml(userOptions));
+        });
         $(document).on("dblclick", "#" + editorID + " a", function () {
             var url = $(this).attr("href");
             var obj = $(this);
@@ -528,27 +677,77 @@
         });
         $(document).on("dblclick", "#" + editorID + " img", function () {
             var obj = $(this);
-            var width = $(this).width();
-            //var height = $(this).height();
-            alertify.prompt('Width', '', width
-                , function (evt, value) {
-                    $(obj).width(value);
-                }
-                , function () {
-                }
-            ).set('type', 'number');
+            var widthOfImg = $(this).width();
+            var heightOfImg = $(this).height();
+            alertify.confirm("Image propertes", "Width:<input type='range' id='" + editorID + "ImgWidth' min='1' max='2000' value='" + widthOfImg + "' class='form-control' />" +
+                "Height:<input type='range' id='" + editorID + "ImgHeight' min='1' max='2000'  value='" + heightOfImg + "' class='form-control'  />" +
+                "Position:<select id='" + editorID + "ImgPos' class='form-control'><option value='float-none'>float none</option><option value='mx-auto d-block'>center</option><option value='float-left'>float left</option><option value='float-right'>float right</option></select>",
+                function () {
+                    $(obj).height($("#" + editorID + "ImgHeight").val());
+                    $(obj).width($("#" + editorID + "ImgWidth").val());
+                    $(obj).removeClass();
+                    $(obj).addClass($("#" + editorID + "ImgPos").val());
+                }, function () {
+                });
+        });
+        $(document).on("mouseenter", "#" + editorID + " img,#" + editorID + " video", function () {
+            $(this).draggable({axis: "x", containment: "#" + editorID});
+        }).on("mouseleave", "#" + editorID + " img", function () {
+            $(this).draggable("destroy");
+        });
+        $(document).on("click", "#" + editorID + " video", function () {
+            var obj = $(this);
+            var widthOfVideo = $(this).width();
+            var heightOfVideo = $(this).height();
+            alertify.confirm("Video propertes", "Width:<input type='range' id='" + editorID + "VideoWidth' min='1' max='2000' value='" + widthOfVideo + "' class='form-control' />" +
+                "Height:<input type='range' id='" + editorID + "VideoHeight' min='1' max='2000'  value='" + heightOfVideo + "' class='form-control'  />" +
+                "Position:<select id='" + editorID + "VideoPos' class='form-control'><option value='float-none'>float none</option><option value='mx-auto d-block'>center</option><option value='float-left'>float left</option><option value='float-right'>float right</option></select>",
+                function () {
+                    $(obj).height($("#" + editorID + "VideoHeight").val());
+                    $(obj).width($("#" + editorID + "VideoWidth").val());
+                    $(obj).removeClass();
+                    $(obj).addClass($("#" + editorID + "VideoPos").val());
+                }, function () {
+                });
         });
         $(document).on("click", "[data-fullscreen='" + editorID + "']", function () {
             var editorID = $(this).attr("data-fullscreen");
             var h = $("#" + editorID + "Wrap").height();
-            if (h == editorHeight) {
+            if (h == userOptions.editor_height) {
                 $("#" + editorID + "Wrap").css({'height': '100vh', 'position': 'fixed'});
                 $("#" + editorID).height(($("#" + editorID + "Wrap").height() - 40) + 'px');
+                $("#" + editorID + "Html").height(($("#" + editorID + "Wrap").height() - 40) + 'px');
             }
             else {
-                $("#" + editorID + "Wrap").css({'height': editorHeight + 'px', 'position': 'relative'});
+                $("#" + editorID + "Wrap").css({'height': userOptions.editor_height + 'px', 'position': 'relative'});
                 $("#" + editorID).height(($("#" + editorID + "Wrap").height() - 40) + 'px');
+                $("#" + editorID + "Html").height(($("#" + editorID + "Wrap").height() - 40) + 'px');
+            }
+        });
+        $(document).on("click", "[data-htmlview='" + editorID + "']", function () {
+            var editorID = $(this).attr("data-htmlview");
+            if ($("#" + editorID).is(':visible')) {
+                $("#" + editorID).hide();
+                $("#" + editorID + "Html").val($("#" + editorID).html());
+                $("#" + editorID + "Html").removeClass("d-none");
+                $("#" + editorID + "Wrap").find('.btn-toolbar .btn').each(function () {
+                    $(this).addClass("disabled");
+                });
+                $("#" + editorID + "Wrap").find('.btn-toolbar input').each(function () {
+                    $(this).attr("disabled", "disabled");
+                });
+            } else {
+                $("#" + editorID + "Html").addClass("d-none");
+                $("#" + editorID).html($("#" + editorID + "Html").val());
+                $("#" + editorID).show();
+                $("#" + editorID + "Wrap").find('.btn-toolbar .btn').each(function () {
+                    $(this).removeClass("disabled");
+                });
+                $("#" + editorID + "Wrap").find('.btn-toolbar input').each(function () {
+                    $(this).removeAttr("disabled");
+                });
             }
         });
     };
-})(window, window.jQuery);
+})
+(window, window.jQuery);
